@@ -1,0 +1,84 @@
+---
+title: "Luxury Car Speeding Stops"
+author: "Evelyn Cai"
+date: "April 7, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(fs)
+library(sf)
+library(ggplot2)
+library(gganimate)
+library(ggthemes)
+```
+
+```{r graphic, message = FALSE, warning = FALSE}
+
+# Read in the rds file for Houston, TX also using URL so it's dynamic
+houston <- read_rds(url("https://stacks.stanford.edu/file/druid:tr137st9964/tr137st9964_tx_houston_2019_02_25.rds"))
+
+# Download the shapefile for houston, also via the stacks.stanford.edu host
+download.file(url = "https://stacks.stanford.edu/file/druid:tr137st9964/tr137st9964_tx_houston_shapefiles_2019_02_25.tgz", destfile = "houstonshapes.tgz",
+                            quiet = TRUE)
+
+# Unzip the shapefile
+untar("houstonshapes.tgz")
+
+# Read in the shapefile to a dataset called houston_shapes_data by including the path to the correct folder
+houston_shapes_data <- read_sf("tx_houston_shapefiles/Houston_Police_Division.shp")
+
+# Delete unnecessary files of Houston's shapefile and all other folders in the file
+file_delete(c("houstonshapes.tgz", "tx_houston_shapefiles/"))
+
+# Modify the houston dataset so that we narrow down 4+ million results into something a little more graphable for the geom_sf().
+houston_citations <- houston %>%
+  # Make sure that vehicle_make is all uppercase, just anticipating some errors if the cases are different
+  mutate(vehicle_make = toupper(vehicle_make)) %>%
+  # Ensure that the actual speed was greater than the real speed (speeding amount was over 0 mph).
+  filter(posted_speed > 0 & speed > 0,
+         # Ensure that a citation was issued (TRUE)
+         citation_issued,
+         # Detect certain strings in the vehicle_make column. These top ten car brands are considered the top car brands known for their luxury, according to Ranker.com. I also used the 'or' symbol since str_detect can only take one length of 1.
+         str_detect(vehicle_make, pattern = c("ROLLS|LAMBO|BENTLEY|FERRARI|BUGATTI|ASTON|PORS|MCLAREN|MERC|MASERATI")),
+         # Make sure that the reason the car was pulled over was due to speeding, which is something of great interest to us later
+         str_detect(violation, pattern = "SPEEDING"),
+         # Ensure that the date exists
+         !is.na(date),
+         # Ensure that the lat and lng coordinates exist
+         !is.na(lat) & !is.na(lng),
+         # Zoom in on the graph (sorry outliers!)
+         lng > -95.65 & lng < -95,
+         lat > 29.5 & lat < 30.1) %>%
+  # Format the date by dropping the year and date so we can combine different years' data for different months
+  mutate(month = format(date, "%B"),
+         # Create a variable called speeding_amt that will calculate the amount by which someone was speeding
+         speeding_amt = speed - posted_speed) %>%
+         # Make sure that the speeding amount was over zero and not negative 
+  filter(speeding_amt >= 0) %>%
+  # Only select the necessary variables
+  select(speeding_amt, month, lat, lng)
+
+# Turn these citation information into an sf object, using the lngs and lats given by houston_citations
+citation_locations <- st_as_sf(houston_citations,
+                           coords = c("lng", "lat"),
+                           crs = 4326)
+
+# Lay a groundwork for houston_shapes_data on a map
+ggplot(data = houston_shapes_data) +
+  geom_sf() +
+  # Second call of geom_sf() means the actual points are citation_locations, that size is directly related to the amount someone was speeding by. The alpha is also set low so we can appreciate how a darker area corresponds to a denser area!
+  geom_sf(data = citation_locations, mapping = aes(size = speeding_amt, color = "red", alpha = 0.3), show.legend = FALSE) +
+  # Actually add everything to a map using theme_map()
+  theme_map() +
+  # Create labels that accurately describe what's going on in Houston for luxury cars
+  labs(
+       subtitle = "For 01/01/2014-04/08/2018, the summer months of June through November show fewer stops.",
+       caption = "Source: Stanford Open Policing Project") +
+  # Add a transition by month, which will make the plot animated/dynamic instead of static.
+  transition_manual(month) +
+  labs(title = "Citations for Speeding Luxury Cars by Month in Houston, TX for {current_frame}")
+```
+
